@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RAG Document Q&A</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔍</text></svg>" />
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2d3248;
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --accent-dim: rgba(99,102,241,0.15);
+      --text: #e2e8f0;
+      --text-dim: #94a3b8;
+      --text-muted: #475569;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --radius: 12px;
+      --shadow: 0 4px 24px rgba(0,0,0,0.4);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: 300px; min-width: 300px; background: var(--surface); border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .sidebar-header {
+      padding: 20px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .logo { font-size: 22px; font-weight: 700; background: linear-gradient(135deg,#6366f1,#a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .logo-sub { font-size: 11px; color: var(--text-muted); letter-spacing: 1px; text-transform: uppercase; }
+    .upload-zone {
+      margin: 16px; border: 2px dashed var(--border); border-radius: var(--radius);
+      padding: 24px 16px; text-align: center; cursor: pointer; transition: all 0.2s;
+      position: relative;
+    }
+    .upload-zone:hover, .upload-zone.dragover { border-color: var(--accent); background: var(--accent-dim); }
+    .upload-zone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    .upload-icon { font-size: 28px; margin-bottom: 8px; }
+    .upload-text { font-size: 13px; color: var(--text-dim); }
+    .upload-formats { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+    .upload-progress {
+      margin: 0 16px 12px; background: var(--surface2); border-radius: 8px; overflow: hidden; display: none;
+    }
+    .upload-progress-bar { height: 4px; background: linear-gradient(90deg,#6366f1,#a855f7); width: 0%; transition: width 0.3s; }
+    .upload-status { font-size: 12px; color: var(--text-dim); padding: 6px 10px; }
+    .docs-section { flex: 1; overflow-y: auto; padding: 0 12px 12px; }
+    .docs-header { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; padding: 12px 4px 8px; }
+    .doc-item {
+      display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px;
+      margin-bottom: 4px; cursor: pointer; transition: background 0.15s; position: relative; group: true;
+    }
+    .doc-item:hover { background: var(--surface2); }
+    .doc-item.selected { background: var(--accent-dim); border: 1px solid var(--accent); }
+    .doc-icon { font-size: 18px; flex-shrink: 0; }
+    .doc-info { flex: 1; min-width: 0; }
+    .doc-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .doc-meta { font-size: 11px; color: var(--text-muted); }
+    .doc-delete { opacity: 0; font-size: 14px; cursor: pointer; padding: 2px 6px; border-radius: 4px; color: var(--danger); transition: opacity 0.15s; }
+    .doc-item:hover .doc-delete { opacity: 1; }
+    .empty-docs { text-align: center; padding: 32px 16px; color: var(--text-muted); font-size: 13px; }
+    .sidebar-stats { padding: 12px 16px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted); display: flex; gap: 16px; }
+    .stat-pill { display: flex; align-items: center; gap: 5px; }
+
+    /* ── Main chat area ── */
+    #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    #topbar {
+      padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex;
+      align-items: center; justify-content: space-between; background: var(--surface);
+    }
+    .topbar-left h2 { font-size: 16px; font-weight: 600; }
+    .topbar-left p { font-size: 12px; color: var(--text-muted); }
+    .topbar-right { display: flex; gap: 8px; align-items: center; }
+    .badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 500; }
+    .badge-green { background: rgba(16,185,129,0.15); color: var(--success); }
+    .badge-yellow { background: rgba(245,158,11,0.15); color: var(--warning); }
+    .badge-red { background: rgba(239,68,68,0.15); color: var(--danger); }
+    .btn-icon { background: var(--surface2); border: 1px solid var(--border); color: var(--text-dim); padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; transition: all 0.15s; }
+    .btn-icon:hover { border-color: var(--accent); color: var(--accent); }
+    #messages { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+    .welcome {
+      max-width: 600px; margin: auto; text-align: center; padding: 40px 20px;
+    }
+    .welcome h1 { font-size: 28px; font-weight: 700; margin-bottom: 12px; background: linear-gradient(135deg,#6366f1,#a855f7,#ec4899); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .welcome p { color: var(--text-dim); font-size: 15px; line-height: 1.6; margin-bottom: 24px; }
+    .welcome-steps { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; text-align: left; }
+    .step { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+    .step-num { font-size: 22px; margin-bottom: 8px; }
+    .step-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+    .step-desc { font-size: 12px; color: var(--text-muted); }
+    .message { display: flex; gap: 12px; max-width: 900px; }
+    .message.user { flex-direction: row-reverse; margin-left: auto; }
+    .avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
+    .avatar-ai { background: linear-gradient(135deg,#6366f1,#a855f7); }
+    .avatar-user { background: var(--surface2); border: 1px solid var(--border); }
+    .bubble {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 14px 18px; max-width: calc(100% - 44px); line-height: 1.65; font-size: 14px;
+    }
+    .message.user .bubble { background: var(--accent-dim); border-color: var(--accent); }
+    .bubble pre { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow-x: auto; margin: 10px 0; font-size: 13px; }
+    .bubble code { font-family: 'JetBrains Mono', monospace; font-size: 13px; }
+    .bubble p { margin-bottom: 8px; }
+    .bubble p:last-child { margin-bottom: 0; }
+    .sources-toggle { font-size: 12px; color: var(--accent); cursor: pointer; margin-top: 10px; display: inline-flex; align-items: center; gap: 4px; }
+    .sources-toggle:hover { color: var(--accent-hover); }
+    .sources-list { margin-top: 10px; display: none; }
+    .sources-list.open { display: block; }
+    .source-chip {
+      display: inline-flex; align-items: center; gap: 6px; background: var(--surface2);
+      border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 11px;
+      margin: 3px; cursor: pointer; transition: border-color 0.15s;
+    }
+    .source-chip:hover { border-color: var(--accent); }
+    .source-score { color: var(--success); font-weight: 600; }
+    .thinking { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 13px; }
+    .dots span { display: inline-block; width: 6px; height: 6px; background: var(--accent); border-radius: 50%; animation: bounce 1.2s infinite; margin: 0 2px; }
+    .dots span:nth-child(2) { animation-delay: 0.2s; }
+    .dots span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce { 0%,80%,100%{transform:translateY(0)} 40%{transform:translateY(-8px)} }
+    .meta-line { font-size: 11px; color: var(--text-muted); margin-top: 8px; display: flex; gap: 12px; align-items: center; }
+    .meta-line span { display: flex; align-items: center; gap: 3px; }
+
+    /* ── Input area ── */
+    #input-area {
+      padding: 16px 24px 20px; border-top: 1px solid var(--border); background: var(--surface);
+    }
+    .options-bar { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+    .opt-toggle {
+      font-size: 11px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border);
+      background: transparent; color: var(--text-dim); cursor: pointer; transition: all 0.15s;
+    }
+    .opt-toggle.active { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .input-row { display: flex; gap: 10px; }
+    #question-input {
+      flex: 1; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius);
+      color: var(--text); font-size: 14px; padding: 12px 16px; resize: none; outline: none;
+      transition: border-color 0.15s; font-family: inherit; line-height: 1.5;
+    }
+    #question-input:focus { border-color: var(--accent); }
+    #question-input::placeholder { color: var(--text-muted); }
+    #send-btn {
+      background: linear-gradient(135deg,#6366f1,#a855f7); border: none; border-radius: var(--radius);
+      color: white; padding: 0 20px; cursor: pointer; font-size: 18px; transition: opacity 0.15s; flex-shrink: 0;
+    }
+    #send-btn:hover:not(:disabled) { opacity: 0.85; }
+    #send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .input-hint { font-size: 11px; color: var(--text-muted); margin-top: 8px; }
+
+    /* ── Toast ── */
+    #toast { position: fixed; bottom: 24px; right: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 20px; font-size: 13px; opacity: 0; transform: translateY(10px); transition: all 0.3s; z-index: 999; max-width: 320px; }
+    #toast.show { opacity: 1; transform: translateY(0); }
+    #toast.success { border-color: var(--success); color: var(--success); }
+    #toast.error { border-color: var(--danger); color: var(--danger); }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+    @media (max-width: 768px) {
+      #sidebar { width: 260px; min-width: 0; }
+      .welcome-steps { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<aside id="sidebar">
+  <div class="sidebar-header">
+    <div>
+      <div class="logo">⚡ DocQA</div>
+      <div class="logo-sub">RAG-Powered Search</div>
+    </div>
+  </div>
+
+  <div class="upload-zone" id="uploadZone">
+    <input type="file" id="fileInput" accept=".pdf,.txt,.docx,.md,.csv,.html" multiple />
+    <div class="upload-icon">📄</div>
+    <div class="upload-text">Drop files or click to upload</div>
+    <div class="upload-formats">PDF • DOCX • TXT • MD • CSV • HTML</div>
+  </div>
+
+  <div class="upload-progress" id="uploadProgress">
+    <div class="upload-progress-bar" id="uploadBar"></div>
+    <div class="upload-status" id="uploadStatus">Processing…</div>
+  </div>
+
+  <div class="docs-section">
+    <div class="docs-header">📚 Indexed Documents</div>
+    <div id="docsList"><div class="empty-docs">No documents yet.<br/>Upload files to get started.</div></div>
+  </div>
+
+  <div class="sidebar-stats" id="sidebarStats">
+    <div class="stat-pill">📄 <span id="statDocs">0</span> docs</div>
+    <div class="stat-pill">🧩 <span id="statChunks">0</span> chunks</div>
+  </div>
+</aside>
+
+<!-- Main -->
+<main id="main">
+  <div id="topbar">
+    <div class="topbar-left">
+      <h2>Document Q&A</h2>
+      <p id="contextLabel">No documents selected — querying all</p>
+    </div>
+    <div class="topbar-right">
+      <span class="badge badge-green" id="statusBadge">● Connected</span>
+      <button class="btn-icon" onclick="clearChat()">🗑 Clear</button>
+      <button class="btn-icon" onclick="newSession()">＋ New Session</button>
+    </div>
+  </div>
+
+  <div id="messages">
+    <div class="welcome">
+      <h1>Ask Anything About Your Documents</h1>
+      <p>Upload documents, then ask questions in natural language.<br/>
+         Powered by local LLMs — your data never leaves your machine.</p>
+      <div class="welcome-steps">
+        <div class="step"><div class="step-num">1️⃣</div><div class="step-title">Upload</div><div class="step-desc">Drop PDFs, DOCX, TXT or other files into the sidebar</div></div>
+        <div class="step"><div class="step-num">2️⃣</div><div class="step-title">Index</div><div class="step-desc">Files are chunked, embedded, and stored in a FAISS vector index</div></div>
+        <div class="step"><div class="step-num">3️⃣</div><div class="step-title">Ask</div><div class="step-desc">Type any question — get answers with source citations</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="input-area">
+    <div class="options-bar">
+      <button class="opt-toggle active" id="toggleMMR" onclick="toggleOption('mmr')">🎯 MMR Diversity</button>
+      <button class="opt-toggle active" id="toggleSources" onclick="toggleOption('sources')">📎 Show Sources</button>
+      <label class="opt-toggle" style="cursor:pointer">
+        Top-K: <select id="topkSelect" style="background:transparent;border:none;color:inherit;font-size:11px;cursor:pointer">
+          <option>3</option><option selected>5</option><option>8</option><option>10</option><option>15</option>
+        </select>
+      </label>
+    </div>
+    <div class="input-row">
+      <textarea id="question-input" rows="2" placeholder="Ask a question about your documents…" onkeydown="handleKey(event)"></textarea>
+      <button id="send-btn" onclick="sendQuestion()" title="Send (Enter)">➤</button>
+    </div>
+    <div class="input-hint">Press Enter to send · Shift+Enter for newline · Select documents in sidebar to filter</div>
+  </div>
+</main>
+
+<div id="toast"></div>
+
+<script>
+const API = "http://127.0.0.1:8000";
+let sessionId = null;
+let selectedDocIds = [];
+let options = { mmr: true, sources: true };
+let allDocs = [];
+
+// ── Init ──
+window.addEventListener('DOMContentLoaded', async () => {
+  await loadDocuments();
+  await checkHealth();
+  setInterval(checkHealth, 30000);
+});
+
+async function checkHealth() {
+  try {
+    const r = await fetch(`${API}/health`);
+    const d = await r.json();
+    const badge = document.getElementById('statusBadge');
+    badge.textContent = d.status === 'healthy' ? '● Connected' : '⚠ Degraded';
+    badge.className = 'badge ' + (d.status === 'healthy' ? 'badge-green' : 'badge-yellow');
+  } catch {
+    const badge = document.getElementById('statusBadge');
+    badge.textContent = '✕ Offline';
+    badge.className = 'badge badge-red';
+  }
+}
+
+// ── Upload ──
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('dragover'); handleFiles(e.dataTransfer.files); });
+fileInput.addEventListener('change', () => handleFiles(fileInput.files));
+
+async function handleFiles(files) {
+  for (const file of files) {
+    await uploadFile(file);
+  }
+  fileInput.value = '';
+}
+
+async function uploadFile(file) {
+  const progress = document.getElementById('uploadProgress');
+  const bar = document.getElementById('uploadBar');
+  const status = document.getElementById('uploadStatus');
+  progress.style.display = 'block';
+  status.textContent = `Uploading ${file.name}…`;
+  bar.style.width = '30%';
+
+  const form = new FormData();
+  form.append('file', file);
+
+  try {
+    bar.style.width = '60%';
+    status.textContent = `Processing ${file.name}…`;
+    const r = await fetch(`${API}/api/v1/documents/upload`, { method: 'POST', body: form });
+    bar.style.width = '100%';
+
+    if (!r.ok) {
+      const err = await r.json();
+      throw new Error(err.message || 'Upload failed');
+    }
+    const data = await r.json();
+    status.textContent = `✅ ${file.name} — ${data.num_chunks} chunks indexed`;
+    toast(`Indexed ${data.num_chunks} chunks from ${file.name}`, 'success');
+    await loadDocuments();
+  } catch (e) {
+    status.textContent = `❌ ${e.message}`;
+    toast(e.message, 'error');
+  } finally {
+    setTimeout(() => { progress.style.display = 'none'; }, 3000);
+  }
+}
+
+// ── Document list ──
+async function loadDocuments() {
+  try {
+    const r = await fetch(`${API}/api/v1/documents/`);
+    const data = await r.json();
+    allDocs = data.documents || [];
+    renderDocsList();
+    updateStats();
+  } catch {}
+}
+
+function renderDocsList() {
+  const el = document.getElementById('docsList');
+  if (!allDocs.length) {
+    el.innerHTML = '<div class="empty-docs">No documents yet.<br/>Upload files to get started.</div>';
+    return;
+  }
+  el.innerHTML = allDocs.map(doc => `
+    <div class="doc-item ${selectedDocIds.includes(doc.doc_id) ? 'selected' : ''}"
+         onclick="toggleDocSelect('${doc.doc_id}')">
+      <div class="doc-icon">${docIcon(doc.file_type)}</div>
+      <div class="doc-info">
+        <div class="doc-name" title="${doc.filename}">${doc.filename}</div>
+        <div class="doc-meta">${doc.num_chunks} chunks · ${formatSize(doc.file_size_bytes)}</div>
+      </div>
+      <span class="doc-delete" onclick="deleteDoc(event,'${doc.doc_id}')">✕</span>
+    </div>
+  `).join('');
+}
+
+function docIcon(ext) {
+  const map = { '.pdf':'📕', '.docx':'📘', '.txt':'📄', '.md':'📝', '.csv':'📊', '.html':'🌐' };
+  return map[ext] || '📄';
+}
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + 'B';
+  if (bytes < 1048576) return (bytes/1024).toFixed(1) + 'KB';
+  return (bytes/1048576).toFixed(1) + 'MB';
+}
+
+function toggleDocSelect(docId) {
+  if (selectedDocIds.includes(docId)) {
+    selectedDocIds = selectedDocIds.filter(d => d !== docId);
+  } else {
+    selectedDocIds.push(docId);
+  }
+  renderDocsList();
+  document.getElementById('contextLabel').textContent =
+    selectedDocIds.length ? `Filtering: ${selectedDocIds.length} document(s)` : 'No documents selected — querying all';
+}
+
+async function deleteDoc(e, docId) {
+  e.stopPropagation();
+  if (!confirm('Delete this document from the index?')) return;
+  try {
+    await fetch(`${API}/api/v1/documents/${docId}`, { method: 'DELETE' });
+    selectedDocIds = selectedDocIds.filter(d => d !== docId);
+    await loadDocuments();
+    toast('Document deleted', 'success');
+  } catch { toast('Delete failed', 'error'); }
+}
+
+async function updateStats() {
+  try {
+    const r = await fetch(`${API}/api/v1/documents/stats`);
+    const d = await r.json();
+    document.getElementById('statDocs').textContent = d.total_documents;
+    document.getElementById('statChunks').textContent = d.total_chunks;
+  } catch {}
+}
+
+// ── Options ──
+function toggleOption(key) {
+  options[key] = !options[key];
+  document.getElementById(`toggle${key.charAt(0).toUpperCase()+key.slice(1)}`).classList.toggle('active', options[key]);
+}
+
+// ── Chat ──
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQuestion(); }
+}
+
+async function sendQuestion() {
+  const input = document.getElementById('question-input');
+  const q = input.value.trim();
+  if (!q) return;
+  input.value = '';
+  document.getElementById('send-btn').disabled = true;
+
+  appendMessage('user', q);
+  const thinkingId = appendThinking();
+
+  try {
+    const body = {
+      question: q,
+      session_id: sessionId,
+      top_k: parseInt(document.getElementById('topkSelect').value),
+      use_mmr: options.mmr,
+      include_sources: options.sources,
+      doc_ids: selectedDocIds.length ? selectedDocIds : null,
+    };
+    const r = await fetch(`${API}/api/v1/query/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    removeThinking(thinkingId);
+
+    if (!r.ok) {
+      const err = await r.json();
+      throw new Error(err.message || 'Query failed');
+    }
+    const data = await r.json();
+    sessionId = data.session_id;
+    appendAIMessage(data);
+  } catch (e) {
+    removeThinking(thinkingId);
+    appendMessage('error', `⚠ ${e.message}`);
+    toast(e.message, 'error');
+  } finally {
+    document.getElementById('send-btn').disabled = false;
+    input.focus();
+  }
+}
+
+function appendMessage(role, content) {
+  const msgs = document.getElementById('messages');
+  // Remove welcome screen on first message
+  const welcome = msgs.querySelector('.welcome');
+  if (welcome) welcome.remove();
+
+  const div = document.createElement('div');
+  div.className = `message ${role}`;
+
+  if (role === 'user') {
+    div.innerHTML = `
+      <div class="avatar avatar-user">👤</div>
+      <div class="bubble">${escHtml(content)}</div>`;
+  } else if (role === 'error') {
+    div.innerHTML = `
+      <div class="avatar avatar-ai">⚡</div>
+      <div class="bubble" style="border-color:var(--danger);color:var(--danger)">${escHtml(content)}</div>`;
+  }
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return div;
+}
+
+function appendAIMessage(data) {
+  const msgs = document.getElementById('messages');
+  const id = 'msg-' + Date.now();
+  const sourcesHtml = data.sources && data.sources.length ? `
+    <div class="sources-toggle" onclick="toggleSources('${id}')">
+      📎 ${data.sources.length} source${data.sources.length>1?'s':''} ▾
+    </div>
+    <div class="sources-list" id="${id}-sources">
+      ${data.sources.map(s => `
+        <span class="source-chip" title="${escHtml(s.content.substring(0,200))}">
+          ${docIcon(s.filename.substring(s.filename.lastIndexOf('.')))}
+          ${escHtml(s.filename)}
+          <span class="source-score">${(s.score*100).toFixed(0)}%</span>
+        </span>
+      `).join('')}
+    </div>
+  ` : '';
+
+  const div = document.createElement('div');
+  div.className = 'message';
+  div.id = id;
+  div.innerHTML = `
+    <div class="avatar avatar-ai">⚡</div>
+    <div class="bubble">
+      ${mdToHtml(data.answer)}
+      ${sourcesHtml}
+      <div class="meta-line">
+        <span>🤖 ${data.model_used}</span>
+        <span>⏱ ${data.processing_time_ms}ms</span>
+        ${data.sources ? `<span>🧩 ${data.sources.length} chunks</span>` : ''}
+      </div>
+    </div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function appendThinking() {
+  const msgs = document.getElementById('messages');
+  const id = 'thinking-' + Date.now();
+  const div = document.createElement('div');
+  div.className = 'message';
+  div.id = id;
+  div.innerHTML = `
+    <div class="avatar avatar-ai">⚡</div>
+    <div class="bubble thinking">
+      Thinking <div class="dots"><span></span><span></span><span></span></div>
+    </div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return id;
+}
+
+function removeThinking(id) {
+  document.getElementById(id)?.remove();
+}
+
+function toggleSources(id) {
+  document.getElementById(`${id}-sources`)?.classList.toggle('open');
+}
+
+function clearChat() {
+  document.getElementById('messages').innerHTML = '';
+  sessionId = null;
+}
+
+async function newSession() {
+  try {
+    const r = await fetch(`${API}/api/v1/sessions/`, { method: 'POST' });
+    const d = await r.json();
+    sessionId = d.session_id;
+    clearChat();
+    toast('New session started', 'success');
+  } catch { toast('Failed to create session', 'error'); }
+}
+
+// ── Helpers ──
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function mdToHtml(md) {
+  return md
+    .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+    .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^# (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^[-*] (.+)$/gm, '<li>$1</li>')
+    .replace(/(<li>[\s\S]+?<\/li>)/g, '<ul>$1</ul>')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/^(?!<[hup]|<li|<pre)(.+)$/gm, '<p>$1</p>')
+    .replace(/<p><\/p>/g, '');
+}
+
+function toast(msg, type = 'info') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `show ${type}`;
+  setTimeout(() => { t.className = ''; }, 3500);
+}
+</script>
+</body>
+</html>

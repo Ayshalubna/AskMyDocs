@@ -1,0 +1,51 @@
+# Core Framework
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+python-multipart==0.0.9
+aiofiles==23.2.1
+httpx==0.27.0
+
+# LangChain ecosystem
+langchain==0.2.6
+langchain-community==0.2.6
+langchain-huggingface==0.0.3
+
+# Embeddings & Vector Store
+faiss-cpu==1.8.0
+sentence-transformers==3.0.1
+huggingface-hub==0.23.4
+
+# LLM backends
+transformers==4.42.3
+accelerate==0.31.0
+
+# Document parsing
+pypdf==4.2.0
+python-docx==1.1.2
+beautifulsoup4==4.12.3
+lxml==5.2.2
+
+# Data
+numpy==1.26.4
+pandas==2.2.2
+
+# Config & Validation
+pydantic==2.7.4
+pydantic-settings==2.3.4
+
+# Logging & Monitoring
+structlog==24.2.0
+prometheus-fastapi-instrumentator==7.0.0
+
+# Testing
+pytest==8.2.2
+pytest-asyncio==0.23.7
+pytest-cov==5.0.0
+httpx==0.27.0
+factory-boy==3.3.0
+
+# Dev
+black==24.4.2
+ruff==0.4.9
+mypy==1.10.0
+pre-commit==3.7.1
