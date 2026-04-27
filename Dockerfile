@@ -1,67 +1,147 @@
-# ─────────────────────────────────────────────
-# Stage 1: Builder — install dependencies
-# ─────────────────────────────────────────────
-FROM python:3.11-slim AS builder
+version: "3.9"
 
-WORKDIR /build
+services:
+  # ─────────────── FastAPI App ───────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: askmydocs-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      - UPLOAD_DIR=/app/storage/uploads
+      - VECTOR_STORE_DIR=/app/storage/vectorstore
+      - TOP_K_RESULTS=${TOP_K_RESULTS:-5}
+      - CHUNK_SIZE=${CHUNK_SIZE:-512}
+      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-64}
+      - DEBUG=false
+    volumes:
+      - rag_uploads:/app/storage/uploads
+      - rag_vectorstore:/app/storage/vectorstore
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - rag-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
 
-# System deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    gcc \
-    g++ \
-    libgomp1 \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+  # ─────────────── Ollama LLM ────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: askmydocs-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    networks:
+      - rag-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    # Uncomment for GPU support:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
 
-# Install Python deps into a prefix
-COPY requirements.txt .
-RUN pip install --upgrade pip && \
-    pip install --prefix=/install --no-cache-dir -r requirements.txt
+  # ─────────────── Ollama Model Puller ───────
+  ollama-pull:
+    image: curlimages/curl:latest
+    container_name: askmydocs-ollama-pull
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - rag-net
+    entrypoint: >
+      sh -c "
+        echo 'Pulling Ollama model: ${OLLAMA_MODEL:-mistral}...' &&
+        curl -X POST http://ollama:11434/api/pull \
+          -H 'Content-Type: application/json' \
+          -d '{\"name\": \"${OLLAMA_MODEL:-mistral}\"}' &&
+        echo 'Model pull initiated.'
+      "
+    restart: "no"
 
-# ─────────────────────────────────────────────
-# Stage 2: Runtime
-# ─────────────────────────────────────────────
-FROM python:3.11-slim AS runtime
+  # ─────────────── Frontend UI ───────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: askmydocs-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+    networks:
+      - rag-net
 
-LABEL maintainer="RAG-DocQA" \
-      description="RAG-Powered Document Q&A API" \
-      version="1.0.0"
+  # ─────────────── Prometheus ────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: askmydocs-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    networks:
+      - rag-net
 
-WORKDIR /app
+  # ─────────────── Grafana ───────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: askmydocs-grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    networks:
+      - rag-net
 
-# Runtime system deps only
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgomp1 \
-    curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd -m -u 1001 appuser
+volumes:
+  rag_uploads:
+  rag_vectorstore:
+  ollama_models:
+  hf_cache:
+  prometheus_data:
+  grafana_data:
 
-# Copy installed packages from builder
-COPY --from=builder /install /usr/local
-
-# Copy application source
-COPY app/ ./app/
-COPY scripts/ ./scripts/
-
-# Create storage dirs with correct ownership
-RUN mkdir -p /app/storage/uploads /app/storage/vectorstore \
-    && chown -R appuser:appuser /app
-
-USER appuser
-
-# Pre-download embedding model at build time (optional; speeds up first run)
-# RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
-
-EXPOSE 8000
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-CMD ["uvicorn", "app.main:app", \
-     "--host", "0.0.0.0", \
-     "--port", "8000", \
-     "--workers", "2", \
-     "--loop", "uvloop", \
-     "--http", "httptools", \
-     "--access-log"]
+networks:
+  rag-net:
+    driver: bridge
